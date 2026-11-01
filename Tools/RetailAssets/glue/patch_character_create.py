@@ -218,7 +218,9 @@ def main():
     sys.path.insert(0, str(args.tools))
     from cars_mount_pack import DLL_DEFAULT, H, Storm  # noqa: E402
 
-    storm = Storm(DLL_DEFAULT)
+    # The tools' default StormLib path moved; fall back to the copy MountStudio ships in this repo.
+    repo_storm = Path(__file__).resolve().parents[2] / "MountStudio" / "runtime" / "backend" / "StormLib.dll"
+    storm = Storm(DLL_DEFAULT if DLL_DEFAULT.exists() else repo_storm)
     args.stage.mkdir(parents=True, exist_ok=True)
     triangle, _ = body_triangle.build()
     patched = {}

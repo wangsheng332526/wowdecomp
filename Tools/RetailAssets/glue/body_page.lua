@@ -39,6 +39,419 @@ local function BS_Status()
     return nil;
 end
 
+-- Presets drawer: share codes and saved presets per race and sex, in a card that slides down from a tab under the
+-- step indicator. Styled like the creator skin. Natives: BodyShapeExport/Import/Copy/Paste, Get/Save/DeleteBodyShapePreset.
+function BS.BuildDrawer(panel)
+    local GOLD, GOLD_DIM, INK = { 0.91, 0.77, 0.42 }, { 0.54, 0.43, 0.18 }, { 0.03, 0.04, 0.055 };
+    local TEXT, MUTED, GOOD, BAD = { 0.88, 0.86, 0.80 }, { 0.60, 0.59, 0.55 }, { 0.55, 0.85, 0.50 }, { 0.95, 0.42, 0.36 };
+    local FONT, WHITE = "Fonts\\FRIZQT__.TTF", "Interface\\Buttons\\WHITE8X8";
+    local W, PAD, ROWS, ROW_H, ROWS_TOP = 400, 18, 5, 24, -140;
+    local OPEN_TIME, CLOSE_TIME, FADE, FLASH, TOAST = 0.32, 0.18, 0.16, 0.6, 2.5;
+    local D = { open = false, t = 0, presets = {}, scroll = 0, parts = {}, flashes = {} };
+
+    local function Solid(parent, layer, color, a)
+        local tex = parent:CreateTexture(nil, layer);
+        tex:SetTexture(WHITE);
+        tex:SetVertexColor(color[1], color[2], color[3], a);
+        return tex;
+    end
+    local function Text(parent, size, color)
+        local fs = parent:CreateFontString(nil, "OVERLAY", "GlueFontHighlightSmall");
+        fs:SetFont(FONT, size);
+        fs:SetTextColor(color[1], color[2], color[3]);
+        fs:SetShadowOffset(1, -1);
+        fs:SetShadowColor(0, 0, 0, 0.8);
+        return fs;
+    end
+    local function Border(frame, color, a)
+        local lines = {};
+        for _, side in ipairs({ { "TOPLEFT", "TOPRIGHT" }, { "BOTTOMLEFT", "BOTTOMRIGHT" }, { "TOPLEFT", "BOTTOMLEFT" },
+                                { "TOPRIGHT", "BOTTOMRIGHT" } }) do
+            local line = Solid(frame, "BORDER", color, a);
+            line:SetPoint(side[1], frame, side[1], 0, 0);
+            line:SetPoint(side[2], frame, side[2], 0, 0);
+            if side[1] == "TOPLEFT" and side[2] == "BOTTOMLEFT" or side[1] == "TOPRIGHT" then line:SetWidth(1); else line:SetHeight(1); end
+            lines[#lines + 1] = line;
+        end
+        return lines;
+    end
+    local function Tint(lines, color, a)
+        for _, line in ipairs(lines) do line:SetVertexColor(color[1], color[2], color[3], a); end
+    end
+    local function Ease(t) return 1 - (1 - t) ^ 3; end
+    -- Sections fade in one after another while the card opens.
+    local function Stage(object, delay) D.parts[#D.parts + 1] = { object = object, delay = delay }; return object; end
+
+    -- ---- tab -------------------------------------------------------------------------------------------------
+    local tab = CreateFrame("Button", "BodyShapeDrawerTab", panel);
+    tab:SetSize(132, 24);
+    tab:SetPoint("TOP", CharacterCreateFrame, "TOP", 0, -50);
+    tab:SetFrameLevel(panel:GetFrameLevel() + 12);
+    Solid(tab, "BACKGROUND", INK, 0.9):SetAllPoints(tab);
+    local tabEdges = Border(tab, GOLD_DIM, 0.9);
+    Solid(tab, "HIGHLIGHT", GOLD, 0.08):SetAllPoints(tab);
+    local tabLabel = Text(tab, 12, GOLD);
+    tabLabel:SetText("PRESETS");
+    tabLabel:SetPoint("CENTER", tab, "CENTER", -8, 0);
+    local tabArrow = tab:CreateTexture(nil, "ARTWORK");
+    tabArrow:SetTexture("Interface\\MoneyFrame\\Arrow-Right-Up");
+    tabArrow:SetVertexColor(GOLD[1], GOLD[2], GOLD[3]);
+    tabArrow:SetSize(12, 12);
+    tabArrow:SetPoint("LEFT", tabLabel, "RIGHT", 6, 0);
+
+    -- ---- card ------------------------------------------------------------------------------------------------
+    local card = CreateFrame("Frame", "BodyShapeDrawer", panel);
+    card:SetSize(W, 326);
+    card:SetFrameLevel(panel:GetFrameLevel() + 10);
+    card:EnableMouse(true);
+    card:EnableMouseWheel(true);
+    card:Hide();
+    Solid(card, "BACKGROUND", INK, 0.94):SetAllPoints(card);
+    Border(card, GOLD_DIM, 0.9);
+    local accent = Solid(card, "ARTWORK", GOLD, 1);
+    accent:SetHeight(2);
+    accent:SetPoint("TOP", card, "TOP", 0, 0);
+
+    local function Caption(text, y, delay)
+        local fs = Stage(Text(card, 11, MUTED), delay);
+        fs:SetPoint("TOPLEFT", card, "TOPLEFT", PAD, y);
+        fs:SetText(text);
+        return fs;
+    end
+
+    local function Field(name, width, letters)
+        local edit = CreateFrame("EditBox", name, card);
+        edit:SetSize(width, 26);
+        edit:SetFontObject(GlueFontHighlightSmall);
+        edit:SetFont(FONT, 12);
+        edit:SetTextColor(TEXT[1], TEXT[2], TEXT[3]);
+        edit:SetTextInsets(8, 8, 0, 0);
+        edit:SetAutoFocus(false);
+        edit:SetMaxLetters(letters);
+        Solid(edit, "BACKGROUND", { 0, 0, 0 }, 0.45):SetAllPoints(edit);
+        local edges = Border(edit, GOLD_DIM, 0.35);
+        local line = Solid(edit, "ARTWORK", GOLD, 0.55);
+        line:SetHeight(1);
+        line:SetPoint("BOTTOMLEFT", edit, "BOTTOMLEFT", 0, 0);
+        line:SetPoint("BOTTOMRIGHT", edit, "BOTTOMRIGHT", 0, 0);
+        edit:SetScript("OnEscapePressed", function(self) self:ClearFocus(); end);
+        edit:SetScript("OnEnterPressed", function(self) self:ClearFocus(); end);
+        edit:SetScript("OnEditFocusGained", function(self)
+            self.focused = true; self:HighlightText(); Tint(edges, GOLD, 0.6);
+        end);
+        edit:SetScript("OnEditFocusLost", function(self)
+            self.focused = false; self:HighlightText(0, 0); Tint(edges, GOLD_DIM, 0.35);
+        end);
+        edit.line = line;
+        return edit;
+    end
+
+    local function Flat(name, text, width)
+        local button = CreateFrame("Button", name, card);
+        button:SetSize(width, 24);
+        Solid(button, "BACKGROUND", { 1, 1, 1 }, 0.04):SetAllPoints(button);
+        local edges = Border(button, GOLD_DIM, 0.9);
+        Solid(button, "HIGHLIGHT", GOLD, 0.12):SetAllPoints(button);
+        local label = Text(button, 12, GOLD);
+        label:SetPoint("CENTER", button, "CENTER", 0, 0);
+        label:SetText(text);
+        button.label = label;
+        button:SetScript("OnEnter", function() Tint(edges, GOLD, 1); end);
+        button:SetScript("OnLeave", function() Tint(edges, GOLD_DIM, 0.9); end);
+        button:SetScript("OnMouseDown", function() label:ClearAllPoints(); label:SetPoint("CENTER", button, "CENTER", 1, -1); end);
+        button:SetScript("OnMouseUp", function() label:ClearAllPoints(); label:SetPoint("CENTER", button, "CENTER", 0, 0); end);
+        return button;
+    end
+
+    -- Header.
+    local title = Stage(Text(card, 14, GOLD), 0);
+    title:SetPoint("TOPLEFT", card, "TOPLEFT", PAD, -16);
+    title:SetText("PRESETS & SHARING");
+    local who = Stage(Text(card, 12, MUTED), 0);
+    who:SetPoint("TOPRIGHT", card, "TOPRIGHT", -PAD, -18);
+    local rule = Stage(Solid(card, "BORDER", GOLD_DIM, 0.6), 0);
+    rule:SetHeight(1);
+    rule:SetPoint("TOPLEFT", card, "TOPLEFT", PAD, -40);
+    rule:SetPoint("TOPRIGHT", card, "TOPRIGHT", -PAD, -40);
+
+    -- Status line at the bottom; fades after a moment.
+    local status = Text(card, 12, GOOD);
+    status:SetPoint("BOTTOM", card, "BOTTOM", 0, 12);
+    local function Say(text, good)
+        local color = good and GOOD or BAD;
+        status:SetText(text);
+        status:SetTextColor(color[1], color[2], color[3]);
+        D.toast = GetTime();
+    end
+
+    local function Key()
+        return tostring(CharacterCreate.selectedRaceID or GetSelectedRace()) .. ":" .. tostring(GetSelectedSex());
+    end
+    local function Who()
+        local race = GetNameForRace and GetNameForRace() or "";
+        return race .. (race ~= "" and ", " or "") .. (GetSelectedSex() == SEX_MALE and "male" or "female");
+    end
+
+    local function Import(text)
+        if not BodyShapeImport(text or "") then
+            PlaySound("gsCharacterCreationCancel");
+            Say("That is not a valid body code");
+            return false;
+        end
+        PlaySound("gsCharacterCreationLook");
+        if BS.ResetTriangle then BS.ResetTriangle(); end
+        return true;
+    end
+
+    -- Share code: shows the current sliders; Copy puts it on the clipboard, Paste applies the clipboard's code.
+    Caption("SHARE CODE", -54, 0.05);
+    local code = Stage(Field("BodyShapeCodeBox", W - 2 * PAD, 120), 0.05);
+    code:SetPoint("TOPLEFT", card, "TOPLEFT", PAD, -72);
+    code:SetScript("OnEnterPressed", function(self)
+        if Import(self:GetText()) then Say("Body code applied", true); D.flashes[code] = GetTime(); end
+        self:ClearFocus();
+    end);
+    local paste = Stage(Flat("BodyShapePasteButton", "PASTE", 64), 0.05);
+    paste:SetPoint("BOTTOMRIGHT", code, "TOPRIGHT", 0, 4);
+    paste:SetScript("OnClick", function()
+        local text = BodyShapePaste();
+        if not text then Say("The clipboard is empty"); return; end
+        if Import(text) then
+            code:SetText(BodyShapeExport());
+            code:SetCursorPosition(0);
+            Say("Code from clipboard applied", true);
+            D.flashes[code] = GetTime();
+        end
+    end);
+    local copy = Stage(Flat("BodyShapeCopyButton", "COPY", 64), 0.05);
+    copy:SetPoint("RIGHT", paste, "LEFT", -6, 0);
+    copy:SetScript("OnClick", function()
+        PlaySound("gsCharacterCreationLook");
+        if BodyShapeCopy(BodyShapeExport()) then
+            Say("Code copied to the clipboard", true);
+            D.flashes[code] = GetTime();
+        else
+            Say("Could not reach the clipboard");
+        end
+    end);
+
+    -- Saved presets for this race and sex. Click a row to load it; X twice deletes it; the wheel scrolls.
+    Caption("SAVED LOOKS", -118, 0.10);
+    local count = Stage(Text(card, 11, MUTED), 0.10);
+    count:SetPoint("TOPRIGHT", card, "TOPRIGHT", -PAD, -118);
+    local empty = Stage(Text(card, 12, MUTED), 0.10);
+    empty:SetPoint("TOP", card, "TOP", 0, ROWS_TOP - ROW_H * 2 + 4);
+    empty:SetText("Nothing saved for this race yet. Name your look below.");
+
+    local rows, Refresh = {};
+    local function Load(row)
+        local preset = D.presets[row.index];
+        if preset and Import(preset.code) then
+            Say("Loaded \"" .. preset.name .. "\"", true);
+            D.flashes[row] = GetTime();
+        end
+    end
+    for i = 1, ROWS do
+        local row = Stage(CreateFrame("Button", nil, card), 0.10 + i * 0.012);
+        row:SetHeight(ROW_H);
+        row:SetPoint("TOPLEFT", card, "TOPLEFT", PAD, ROWS_TOP - (i - 1) * ROW_H);
+        row:SetPoint("TOPRIGHT", card, "TOPRIGHT", -PAD, ROWS_TOP - (i - 1) * ROW_H);
+        local hairline = Solid(row, "BACKGROUND", { 1, 1, 1 }, 0.07);
+        hairline:SetHeight(1);
+        hairline:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0);
+        hairline:SetPoint("TOPRIGHT", row, "TOPRIGHT", 0, 0);
+        row.wash = Solid(row, "BACKGROUND", GOLD, 0);
+        row.wash:SetAllPoints(row);
+        Solid(row, "HIGHLIGHT", GOLD, 0.10):SetAllPoints(row);
+        row.accent = Solid(row, "ARTWORK", GOLD, 1);
+        row.accent:SetWidth(2);
+        row.accent:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -1);
+        row.accent:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 1);
+        row.accent:Hide();
+        row.name = Text(row, 13, TEXT);
+        row.name:SetPoint("LEFT", row, "LEFT", 12, 0);
+        row.name:SetPoint("RIGHT", row, "RIGHT", -150, 0);
+        row.name:SetJustifyH("LEFT");
+        row.hint = Text(row, 11, MUTED);
+        row.hint:SetPoint("RIGHT", row, "RIGHT", -30, 0);
+        row.hint:Hide();
+        local delete = CreateFrame("Button", nil, row);
+        delete:SetSize(22, 22);
+        delete:SetPoint("RIGHT", row, "RIGHT", -2, 0);
+        delete.label = Text(delete, 12, MUTED);
+        delete.label:SetPoint("CENTER", delete, "CENTER", 0, 0);
+        delete.label:SetText("X");
+        local function Hover(on)
+            if on then row.accent:Show(); row.hint:Show(); else row.accent:Hide(); if not row.armed then row.hint:Hide(); end end
+        end
+        row:SetScript("OnEnter", function() Hover(true); end);
+        row:SetScript("OnLeave", function() Hover(false); end);
+        row:SetScript("OnClick", Load);
+        delete:SetScript("OnEnter", function() delete.label:SetTextColor(BAD[1], BAD[2], BAD[3]); Hover(true); end);
+        delete:SetScript("OnLeave", function() delete.label:SetTextColor(MUTED[1], MUTED[2], MUTED[3]); Hover(false); end);
+        delete:SetScript("OnClick", function()
+            local preset = D.presets[row.index];
+            if not preset then return; end
+            if not row.armed or GetTime() - row.armed > 3 then
+                row.armed = GetTime();
+                row.hint:SetText("Click X again to delete");
+                row.hint:SetTextColor(BAD[1], BAD[2], BAD[3]);
+                row.hint:Show();
+                return;
+            end
+            PlaySound("gsCharacterCreationCancel");
+            DeleteBodyShapePreset(Key(), preset.name);
+            Refresh();
+            Say("Deleted \"" .. preset.name .. "\"", true);
+        end);
+        rows[i] = row;
+    end
+
+    local function Draw()
+        local total = #D.presets;
+        D.scroll = math.max(0, math.min(D.scroll, total - ROWS));
+        for i, row in ipairs(rows) do
+            local index = D.scroll + i;
+            local preset = D.presets[index];
+            row.index, row.armed = index, nil;
+            row.hint:SetText("Click to load");
+            row.hint:SetTextColor(MUTED[1], MUTED[2], MUTED[3]);
+            row.hint:Hide();
+            row.accent:Hide();
+            if preset then row.name:SetText(preset.name); row:Show(); else row:Hide(); end
+        end
+        if total == 0 then empty:Show(); else empty:Hide(); end
+        if total > ROWS then
+            count:SetText((D.scroll + 1) .. "-" .. math.min(D.scroll + ROWS, total) .. " of " .. total .. "  \194\183  scroll");
+        else
+            count:SetText(total == 1 and "1 look" or total .. " looks");
+        end
+    end
+
+    -- Re-reads this race and sex's presets; `select` scrolls to and flashes the named one.
+    function Refresh(select)
+        D.key, D.presets = Key(), {};
+        local list = { GetBodyShapePresets(D.key) };
+        for i = 1, #list, 2 do
+            D.presets[#D.presets + 1] = { name = list[i], code = list[i + 1] };
+            if list[i] == select then D.scroll = math.max(0, #D.presets - ROWS); end
+        end
+        Draw();
+        for _, row in ipairs(rows) do
+            if select and D.presets[row.index] and D.presets[row.index].name == select then D.flashes[row] = GetTime(); end
+        end
+    end
+    card:SetScript("OnMouseWheel", function(_, delta) D.scroll = D.scroll - delta; Draw(); end);
+
+    -- Name and save; typing an existing name turns Save into Update.
+    local name = Stage(Field("BodyShapePresetName", W - 2 * PAD - 94, 32), 0.16);
+    name:SetPoint("TOPLEFT", card, "TOPLEFT", PAD, ROWS_TOP - ROWS * ROW_H - 16);
+    local save = Stage(Flat("BodyShapePresetSave", "SAVE", 88), 0.16);
+    save:SetPoint("LEFT", name, "RIGHT", 6, 0);
+    local function Typed() return ((name:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")); end
+    local function Save()
+        local label = Typed();
+        if label == "" then label = "Look " .. (#D.presets + 1); end
+        if not SaveBodyShapePreset(Key(), label, BodyShapeExport()) then
+            Say("Could not write WTF\\BodyShapePresets.txt");
+            return;
+        end
+        PlaySound("gsCharacterCreationLook");
+        name:SetText("");
+        name:ClearFocus();
+        Refresh(label);
+        Say("Saved \"" .. label .. "\"", true);
+    end
+    save:SetScript("OnClick", Save);
+    name:SetScript("OnEnterPressed", Save);
+    local nameHint = Text(name, 12, MUTED);
+    nameHint:SetPoint("LEFT", name, "LEFT", 8, 0);
+    nameHint:SetText("Name this look...");
+
+    -- ---- motion ----------------------------------------------------------------------------------------------
+    local DOWN, UP = { 0, 1, 1, 1, 0, 0, 1, 0 }, { 1, 0, 0, 0, 1, 1, 0, 1 }; -- the right arrow turned 90 degrees
+    local function Place()
+        local e = Ease(D.t);
+        tabArrow:SetTexCoord(unpack(e > 0.5 and UP or DOWN));
+        Tint(tabEdges, e > 0.5 and GOLD or GOLD_DIM, 0.9);
+        if D.t <= 0 then card:Hide(); return; end
+        card:Show();
+        card:ClearAllPoints();
+        card:SetPoint("TOP", tab, "BOTTOM", 0, -6 + 24 * (1 - e));
+        card:SetAlpha(e);
+        accent:SetWidth(math.max(1, W * e));
+        for _, part in ipairs(D.parts) do
+            part.object:SetAlpha(D.open and Ease(math.max(0, math.min(1, (D.t * OPEN_TIME - part.delay) / FADE))) or 1);
+        end
+    end
+    local function Toggle(open)
+        if D.open == open then return; end
+        D.open = open;
+        PlaySound(open and "gsCharacterCreationLook" or "gsCharacterCreationCancel");
+        if open then
+            Refresh();
+            code:SetText(BodyShapeExport());
+            code:SetCursorPosition(0);
+        else
+            code:ClearFocus();
+            name:ClearFocus();
+        end
+    end
+    tab:SetScript("OnClick", function() Toggle(not D.open); end);
+
+    local animator = CreateFrame("Frame", nil, panel);
+    animator:SetScript("OnUpdate", function(_, elapsed)
+        local target = D.open and 1 or 0;
+        if D.t ~= target then
+            local step = elapsed / (D.open and OPEN_TIME or CLOSE_TIME);
+            D.t = D.open and math.min(1, D.t + step) or math.max(0, D.t - step);
+            Place();
+        end
+        local now = GetTime();
+        for object, at in pairs(D.flashes) do
+            local left = math.max(0, 1 - (now - at) / FLASH);
+            if left <= 0 then D.flashes[object] = nil; end
+            if object == code then object.line:SetVertexColor(GOLD[1] + (1 - GOLD[1]) * left, GOLD[2] + (1 - GOLD[2]) * left,
+                GOLD[3] + (0.8 - GOLD[3]) * left, 0.55 + 0.45 * left);
+            else object.wash:SetAlpha(0.35 * left); end
+        end
+        local shown = D.toast and math.max(0, math.min(1, (TOAST - (now - D.toast)) / 0.5)) or 0;
+        status:SetAlpha(shown);
+        if D.toast and shown <= 0 then D.toast = nil; end
+    end);
+    Place();
+
+    -- Escape closes the drawer before it backs out of the page.
+    local keyDown = CharacterCreate_OnKeyDown;
+    function CharacterCreate_OnKeyDown(key, ...)
+        if key == "ESCAPE" and D.open and BS.page then Toggle(false); return; end
+        return keyDown(key, ...);
+    end
+
+    -- From the page tick: keep the code current and the list on the selected race and sex.
+    function BS.SyncShare()
+        if D.open and not code.focused then
+            local current = BodyShapeExport();
+            if code:GetText() ~= current then code:SetText(current); code:SetCursorPosition(0); end
+        end
+        if D.key ~= Key() then D.scroll = 0; Refresh(); end
+        who:SetText(Who());
+        local typed = Typed();
+        local exists = false;
+        for _, preset in ipairs(D.presets) do if preset.name == typed then exists = true; end end
+        save.label:SetText(exists and "UPDATE" or "SAVE");
+        if typed == "" and not name.focused then nameHint:Show(); else nameHint:Hide(); end
+        for _, row in ipairs(rows) do
+            if row.armed and GetTime() - row.armed > 3 then
+                row.armed = nil;
+                row.hint:SetText("Click to load");
+                row.hint:SetTextColor(MUTED[1], MUTED[2], MUTED[3]);
+                if not row.accent:IsShown() then row.hint:Hide(); end
+            end
+        end
+    end
+end
+
 local function BS_Install()
     local BACKDROP = {
         bgFile = "Interface\\Glues\\Common\\Glue-Tooltip-Background",
@@ -56,10 +469,10 @@ local function BS_Install()
     note:SetTextColor(1, 0.6, 0.4);
     note:Hide();
 
-    local function MakeButton(name, text, width, x)
+    local function MakeButton(name, text, width, x, y)
         local button = CreateFrame("Button", name, panel);
         button:SetSize(width, 26);
-        button:SetPoint("TOP", CharacterCreateFrame, "TOP", x, -64);
+        button:SetPoint("TOP", CharacterCreateFrame, "TOP", x, y or -64);
         button:SetNormalFontObject(GlueFontNormalSmall);
         button:SetHighlightFontObject(GlueFontHighlightSmall);
         button:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight");
@@ -80,6 +493,8 @@ local function BS_Install()
         ResetBodyShape();
         if BS.ResetTriangle then BS.ResetTriangle(); end
     end);
+
+    if BodyShapeExport and BodyShapeCopy then BS.BuildDrawer(panel); end
 
     local columnTitle = {};
     for _, side in ipairs({ "Body", "Face" }) do
@@ -381,6 +796,7 @@ local function BS_Install()
 
         if BS.page then
             local ok, err = pcall(Layout);
+            if ok and BS.SyncShare then ok, err = pcall(BS.SyncShare); end
             if not ok then BS.broken = tostring(err); BS.page = false; return; end
             panel:Show();
             if BS.okayText and CharCreateOkayButton:GetText() ~= BS.okayText then CharCreateOkayButton:SetText(BS.okayText); end
