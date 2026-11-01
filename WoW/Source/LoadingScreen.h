@@ -53,6 +53,10 @@ bool LoadingScreenDrawing();
 void LoadingScreenDisable();
 void LoadingScreenEnableShipLeg(int32_t entryId, uint32_t leg);
 void LoadingScreenEnable(int32_t mapID, bool loadingWorld);
+// Esteria character swap: a loading screen showing the swap's sky. A later LoadingScreenEnable keeps it.
+void LoadingScreenEnableSwapCover();
+// True while that cover is up: the map load then waits only for what the character stands on (CMap::PrepareUpdate).
+bool LoadingScreenIsSwapCover();
 void LoadingScreenEnableShip(uint32_t transportEntry, int32_t transportMap, int32_t mapID);
 bool LoadDynamicBackground();
 void LoadingScreenInitialize();

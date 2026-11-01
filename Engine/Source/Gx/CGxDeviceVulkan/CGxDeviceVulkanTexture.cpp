@@ -284,14 +284,45 @@ namespace {
         b.src = VK_NULL_HANDLE;
     }
 
-    /// One region's rows staged into the frame's ring, tightly packed, and added to the batch.
-    void StageRegion(TexRec& r, Batch& b, const Region& g, uint32_t level, uint32_t face, const uint8_t* rows, uint32_t rowPitch) {
+    // The region's rows into the staging ring. False when reading them faulted: the texels the texture's callback
+    // handed over end before the region does (seen while a character swap streams the world in; ITexUpload logs the
+    // texture). The upload is then skipped instead of crashing the client.
+    bool CopyRows(uint8_t* out, const uint8_t* rows, uint64_t rowBytes, uint32_t rowPitch, uint32_t rowCount) {
+        __try {
+            if (rowBytes == rowPitch) {
+                memcpy(out, rows, static_cast<size_t>(rowBytes * rowCount));
+            } else {
+                for (uint32_t i = 0; i < rowCount; i++) {
+                    memcpy(out + static_cast<size_t>(i) * static_cast<size_t>(rowBytes), rows + static_cast<size_t>(i) * rowPitch, static_cast<size_t>(rowBytes));
+                }
+            }
+
+            return true;
+        } __except (GetExceptionCode() == 0xC0000005u /* EXCEPTION_ACCESS_VIOLATION */ ? 1 /* EXECUTE_HANDLER */ : 0) {
+            return false;
+        }
+    }
+
+    // DecodeToRgba8 under the same guard as CopyRows: false when reading the texels faulted, otherwise decoded says
+    // whether the format was decodable.
+    bool DecodeRegion(uint32_t format, const Region& g, const uint8_t* src, uint32_t pitch, uint8_t* rgba, bool& decoded) {
+        __try {
+            decoded = texformat::DecodeToRgba8(format, g.w, g.h, src, pitch, rgba);
+            return true;
+        } __except (GetExceptionCode() == 0xC0000005u /* EXCEPTION_ACCESS_VIOLATION */ ? 1 /* EXECUTE_HANDLER */ : 0) {
+            return false;
+        }
+    }
+
+    /// One region's rows staged into the frame's ring, tightly packed, and added to the batch. False only when the
+    /// rows could not be read (CopyRows).
+    bool StageRegion(TexRec& r, Batch& b, const Region& g, uint32_t level, uint32_t face, const uint8_t* rows, uint32_t rowPitch) {
         uint64_t rowBytes = 0;
         uint32_t rowCount = 0;
 
         if (!texture::RegionBytes(r.image, g.w, g.h, rowBytes, rowCount) || rowBytes > rowPitch) {
             g_stats.refused++;
-            return;
+            return true;
         }
 
         const VkDeviceSize total = rowBytes * rowCount;
@@ -301,17 +332,12 @@ namespace {
 
         if (!frame::Stage(total, buf, off, dst)) {
             g_stats.refused++;
-            return;
+            return true;
         }
 
-        uint8_t* out = static_cast<uint8_t*>(dst);
-
-        if (rowBytes == rowPitch) {
-            memcpy(out, rows, static_cast<size_t>(total));
-        } else {
-            for (uint32_t i = 0; i < rowCount; i++) {
-                memcpy(out + static_cast<size_t>(i) * static_cast<size_t>(rowBytes), rows + static_cast<size_t>(i) * rowPitch, static_cast<size_t>(rowBytes));
-            }
+        if (!CopyRows(static_cast<uint8_t*>(dst), rows, rowBytes, rowPitch, rowCount)) {
+            g_stats.refused++;
+            return false;
         }
 
         g_stats.bytes += total;
@@ -329,6 +355,7 @@ namespace {
         c.height = g.h;
         c.layer = face;
         c.srcOffset = off;
+        return true;
     }
 }
 
@@ -511,17 +538,26 @@ void CGxDeviceVulkan::ITexUpload(CGxTex* texId) {
 
             if (texels && usable && face < r.image.layers && level < r.image.levels && (!r.genMips || level == 0) && ComputeRegion(texId, mip, mipWidth, mipHeight, info, g)) {
                 const uint8_t* src = SourceAt(texId->m_flags, g, texels, texelStrideInBytes, info);
+                bool readable = true;
 
                 if (r.decode) {
                     uint8_t* rgba = Scratch(static_cast<uint64_t>(g.w) * g.h * 4u);
+                    bool decoded = false;
+                    readable = rgba && DecodeRegion(r.dataFormat, g, src, texelStrideInBytes, rgba, decoded);
 
-                    if (rgba && texformat::DecodeToRgba8(r.dataFormat, g.w, g.h, src, texelStrideInBytes, rgba)) {
+                    if (decoded) {
                         StageRegion(r, batch, g, level, face, rgba, g.w * 4u);
                     } else {
                         g_stats.refused++;
                     }
                 } else {
-                    StageRegion(r, batch, g, level, face, src, texelStrideInBytes);
+                    readable = StageRegion(r, batch, g, level, face, src, texelStrideInBytes);
+                }
+
+                if (!readable) {
+                    Write(Warn, "vulkan: texture %ux%u (format %d, data format %d, flags %08X) mip %u: its texels end before the %ux%u region at %u,%u (pitch %u); upload skipped",
+                        texId->m_width, texId->m_height, static_cast<int>(texId->m_format), static_cast<int>(r.dataFormat),
+                        SamplerKey(texId->m_flags), mip, g.w, g.h, g.x, g.y, texelStrideInBytes);
                 }
 
                 if (level == 0) {

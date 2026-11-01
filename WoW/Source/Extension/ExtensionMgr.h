@@ -8,6 +8,7 @@
 class AuraData;
 class C3Vector;
 class CDataStore;
+class CGCamera;
 class CGObject_C;
 class CGUnit_C;
 class CM2Model;
@@ -87,6 +88,7 @@ class ExtensionMgr {
     void OnMapLoaded(uint32_t mapId, const char* mapName);
     void OnMapUnload();
     void OnWorldUpdate(float elapsedSec);
+    void OnCameraUpdated(CGCamera* camera);
 
     public: /* RenderScript */
     void OnFrameBegin(float elapsedSec);

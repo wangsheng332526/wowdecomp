@@ -22,6 +22,10 @@ void ExtensionMgr::OnWorldUpdate(float elapsedSec) {
     CALL_HOOKS(WorldScript, script->OnWorldUpdate(elapsedSec));
 }
 
+void ExtensionMgr::OnCameraUpdated(CGCamera* camera) {
+    CALL_HOOKS(WorldScript, script->OnCameraUpdated(*camera));
+}
+
 WorldScript::WorldScript(const char* name) : ScriptObject(name) {
     ScriptRegistry<WorldScript>::AddScript(this);
     sExtensionMgr->Log("Extensions: registered WorldScript %s", name);

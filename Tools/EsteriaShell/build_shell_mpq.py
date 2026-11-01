@@ -1,5 +1,6 @@
 """Builds Patch-ZzzzzzzzzzzEsteriaShell.MPQ: the Esteria additions to the DragonUI micro strip, the Everlook radio
-add-on and the transmog window, as one archive that sorts after every other patch.
+add-on, the transmog window and the character swap wheel with its sky, as one archive that sorts after every other
+patch.
 
   python build_shell_mpq.py --client "G:\\3.3.5a - Dev" --out <archive path>
 
@@ -23,7 +24,7 @@ import cars_mount_pack  # noqa: E402
 
 B = chr(92)
 DUI = "Interface" + B + "AddOns" + B + "DragonUI" + B
-STORM_DLL = pathlib.Path(r"R:\Users\Zach\Downloads\battlemon\Client\wdbx-2.4.1.a-extended-dbc\x64\StormLib.dll")
+STORM_DLL = REPO / "Tools" / "MountStudio" / "runtime" / "backend" / "StormLib.dll"
 
 # (file, old, new, expected matches)
 PATCHES = {
@@ -113,6 +114,41 @@ def wing(d, S, c):
     d.ellipse([ox - 5 * S, oy - 5 * S, ox + 5 * S, oy + 5 * S], fill=c + (255,), outline=(60, 40, 10, 255))
 
 
+def cloud_noise(width, height, seed, octaves=6):
+    """Fractal value noise in [0, 1], height x width."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    noise = np.zeros((height, width))
+    for octave in range(octaves):
+        cells = 4 * 2 ** octave
+        grid = Image.fromarray((rng.random((cells * height // width + 2, cells + 1)) * 255).astype(np.uint8))
+        noise += np.asarray(grid.resize((width, height), Image.BICUBIC), dtype=float) / 255 / 2 ** octave
+    noise -= noise.min()
+    return noise / noise.max()
+
+
+def swap_sky(width=2048, height=512):
+    """The character swap's sky (client cover and in-world curtain), as two layers each shown half its width wide:
+    a blue gradient under soft clouds, and nearer wisps with alpha that drift faster in front of it."""
+    import numpy as np
+    y = np.linspace(0.0, 1.0, height)[:, None]
+    noise = cloud_noise(width, height, 12340)
+    # denser clouds lower down, as if looking out across the cloud tops
+    cover = np.clip((noise - 0.62 + 0.35 * y) * 3.0, 0.0, 1.0)
+    top, horizon = np.array([58, 112, 178]), np.array([170, 205, 235])
+    sky = top + (horizon - top) * y[..., None]
+    cloud = np.array([246, 248, 252]) - 40 * (1 - noise[..., None])
+    back = sky * (1 - cover[..., None]) + cloud * cover[..., None]
+    back = Image.fromarray(back.clip(0, 255).astype(np.uint8), "RGB").filter(ImageFilter.GaussianBlur(1.5))
+
+    wisps = cloud_noise(width, height, 33580, octaves=5)
+    alpha = np.clip((wisps - 0.55) * 2.2, 0.0, 1.0) * 0.85 * (0.4 + 0.6 * y)
+    shade = (235 + 20 * wisps).clip(0, 255)
+    front = np.dstack([shade, shade, shade + 4, alpha * 255]).clip(0, 255).astype(np.uint8)
+    front = Image.fromarray(front, "RGBA").filter(ImageFilter.GaussianBlur(2.0))
+    return back, front
+
+
 def tga(img):
     buf = io.BytesIO()
     img.save(buf, "TGA")
@@ -138,8 +174,15 @@ def main():
     entries[DUI + "modules" + B + "esteria_microbuttons.lua"] = (REPO / "Addons" / "EsteriaShell" / "esteria_microbuttons.lua").read_bytes()
     entries[DUI + "Textures" + B + "Micromenu" + B + "esteria-transmog.tga"] = tga(sheet(tunic))
     entries[DUI + "Textures" + B + "Micromenu" + B + "esteria-flight.tga"] = tga(sheet(wing))
-    for addon in ("EverlookBroadcasting", "Manastorm_Transmog"):
+    back, front = swap_sky()
+    entries["Interface" + B + "Esteria" + B + "SwapSkyBack.tga"] = tga(back)
+    entries["Interface" + B + "Esteria" + B + "SwapSkyFront.tga"] = tga(front)
+    for addon in ("EverlookBroadcasting", "Manastorm_Transmog", "EsteriaSwap"):
         entries.update(tree(REPO / "Addons" / addon, "Interface" + B + "AddOns" + B + addon + B))
+    # The swap wheel's art (EasyController, MIT: easycontroller/README.md)
+    for png in (REPO / "Tools" / "EsteriaShell" / "easycontroller").glob("*.png"):
+        name = "Interface" + B + "AddOns" + B + "EsteriaSwap" + B + "Textures" + B + png.stem + ".tga"
+        entries[name] = tga(Image.open(png).convert("RGBA"))
 
     out = pathlib.Path(args.out)
     if out.exists():

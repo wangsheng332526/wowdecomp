@@ -5,6 +5,7 @@
 #include "WoW/Source/Extension/ScriptObject.h"
 
 class C3Vector;
+class CGCamera;
 
 // The world scene: the server's world-session messages, map boundaries and the world tick. Map
 // hooks fire from WoW/Source/WorldClient/World.cpp, the tick from WoW/Source/Ui/WorldFrame.cpp,
@@ -43,6 +44,11 @@ class WorldScript : public ScriptObject {
     // this frame and the world is about to be rendered. elapsedSec is the world frame's time.
     // Fires only while the world frame is active (in the world, not in the glue).
     virtual void OnWorldUpdate(float elapsedSec) {}
+
+    // CGWorldFrame::OnWorldUpdate(), right after CGCamera::UpdateCallback: the camera has followed its target for this
+    // frame and the projection and sound listener are not set up yet. A script may change camera.m_position and the
+    // facing; the camera recomputes both from its own state next frame, so a change lasts one frame.
+    virtual void OnCameraUpdated(CGCamera& camera) {}
 };
 
 #endif

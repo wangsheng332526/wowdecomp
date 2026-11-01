@@ -1,0 +1,7 @@
+## Interface: 30300
+## Title: Esteria Character Swap
+## Notes: Hold the bound key (Key Bindings > Esteria) or type /swap to switch to another character. Needs the wowdecomp client and an Esteria server with Esteria.Swap.Enable.
+## Version: 1.0
+
+Races.lua
+EsteriaSwap.lua

@@ -61,6 +61,7 @@
 #include "WoW/Source/Game/ValidateName.h"
 #include "WoW/Source/GameClientCommands.h"
 #include "WoW/Source/Glue/CGlueMgr.h"
+#include "WoW/Source/Glue/CharacterSelection.h"
 #include "WoW/Source/Glue/GlueMgr.h"
 #include "WoW/Source/Hardware.h"
 #include "WoW/Source/LoadingScreen.h"
@@ -1353,6 +1354,8 @@ void ClientInitializeGame(uint32_t mapId, C3Vector position) {
         SetClientInitialized(1);
     }
 
+    // Not in the original: the interface is loaded; the time from here to OnMapLoaded is the map's (Extensions.log).
+    sExtensionMgr->Log("Client: interface loaded, loading map %u", mapId);
     CWorld::LoadMap(map->m_directory, &position, mapId, 1);
     AsyncFileReadSetProgressCallback(nullptr, nullptr);
     World::SetLoadProgressCallback(nullptr, nullptr);
@@ -1630,6 +1633,11 @@ void ClientDestroyGame(int32_t charSelect, int32_t resumeGlue, int32_t worldLogi
     AccountDataDestroy(false);
     s_gameInitialized = 0;
     LoadingScreenDisable();
+
+    // Esteria character swap: cover the character select the glue passes through on its way back into the world.
+    if (CCharacterSelection::s_autoEnterGuid && resumeGlue && charSelect) {
+        LoadingScreenEnableSwapCover();
+    }
 
     if (s_clientTaxiBenchEnabled) {
         s_clientTaxiBenchEnabled = 0;

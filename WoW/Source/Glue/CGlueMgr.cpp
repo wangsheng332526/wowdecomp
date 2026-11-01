@@ -1472,6 +1472,12 @@ int32_t CGlueMgr::Idle(const void* data, void* param) {
             return 1;
         }
 
+        // Esteria character swap: no list, no swap; uncover the character select so its error can be read.
+        if (!result && CCharacterSelection::s_autoEnterGuid) {
+            CCharacterSelection::s_autoEnterGuid = { 0 };
+            LoadingScreenDisable();
+        }
+
         if (result) {
             CGlueMgr::m_idleState = IDLE_NONE;
             CGlueMgr::m_showedDisconnect = 0;

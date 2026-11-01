@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <malloc.h>
@@ -66,6 +67,24 @@ static float s_wideAspect = 1.6f;
 
 // STATIC: 0x00AB63BC
 static int32_t s_simpleMapID = -1;
+
+// Esteria character swap: the screen shows the swap's sky (shipped in the EsteriaShell MPQ) instead of the map's
+// art, without the progress bar or tip, until LoadingScreenDisable. The sky is two cloud layers, each showing half its
+// width and sliding back and forth at its own pace. The in-world curtain (the EsteriaSwap addon) draws the same layers
+// on the same clock, so the cuts between curtain and cover show nothing.
+static bool s_swapCover = false;
+static CTexture* s_swapSkyFront = nullptr;
+
+struct SwapSkyLayer {
+    const char* path;
+    double period;
+    double phase;
+};
+
+static const SwapSkyLayer s_swapSkyLayers[2] = {
+    { "Interface\\Esteria\\SwapSkyBack.tga", 240.0, 0.0 },
+    { "Interface\\Esteria\\SwapSkyFront.tga", 50.0, 1.0 },
+};
 
 // STATIC: 0x00AB63C0
 static uint16_t s_indices[4] = { 0, 1, 2, 3 };
@@ -387,9 +406,43 @@ static bool PaintSimpleBackground() {
     g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(s_simpleBackgroundTexture, 1, nullptr));
     GxDrawLockedElements(GxPrim_TriangleStrip, 4, s_indices);
     GxPrimUnlockVertexPtrs();
-    GxuFontRenderBatch(s_batch);
+
+    if (!s_swapCover) {
+        GxuFontRenderBatch(s_batch);
+    }
 
     return true;
+}
+
+static void PaintSwapSky() {
+    static C3Vector vertices[4] = {
+        C3Vector(0.0f, 0.0f, 0.0f),
+        C3Vector(1.0f, 0.0f, 0.0f),
+        C3Vector(0.0f, 1.0f, 0.0f),
+        C3Vector(1.0f, 1.0f, 0.0f),
+    };
+
+    CImVector color;
+    *reinterpret_cast<uint32_t*>(&color) = 0xFFFFFFFF;
+    double time = OsGetAsyncTimeMs() / 1000.0;
+    CTexture* textures[2] = { s_simpleBackgroundTexture, s_swapSkyFront };
+
+    for (int32_t i = 0; i < 2; i++) {
+        if (!textures[i]) {
+            continue;
+        }
+
+        const SwapSkyLayer& layer = s_swapSkyLayers[i];
+        float u = 0.25f + 0.25f * static_cast<float>(sin(time * 6.283185307179586 / layer.period + layer.phase));
+        C2Vector texCoord[4] = { C2Vector(u, 1.0f), C2Vector(u + 0.5f, 1.0f), C2Vector(u, 0.0f), C2Vector(u + 0.5f, 0.0f) };
+
+        GxRsSet(GxRs_BlendingMode, 2);
+        GxUpdateAlphaRef(GxRs_AlphaRef);
+        GxPrimLockVertexPtrs(4, vertices, sizeof(C3Vector), nullptr, 0, &color, 0, nullptr, 0, texCoord, sizeof(C2Vector), nullptr, 0);
+        g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(textures[i], 1, nullptr));
+        GxDrawLockedElements(GxPrim_TriangleStrip, 4, s_indices);
+        GxPrimUnlockVertexPtrs();
+    }
 }
 
 // VERIFY: 0739e068 manual
@@ -549,6 +602,14 @@ static void LoadingScreenPaint(void* param, const RECTF* rect, const RECTF* visi
         return;
     }
 
+    if (s_swapCover && !s_simpleBackgroundTexture) {
+        CStatus status;
+        CGxTexFlags flags;
+        s_simpleBackgroundTexture = TextureCreate(s_swapSkyLayers[0].path, flags, &status, 1);
+        s_swapSkyFront = TextureCreate(s_swapSkyLayers[1].path, flags, &status, 1);
+        s_usingWideScreen = true;
+    }
+
     if (!s_simpleBackgroundTexture && s_simpleMapID != -1 && !LoadSimpleBackgroundTexture()) {
         s_simpleMapID = -1;
     }
@@ -569,7 +630,8 @@ static void LoadingScreenPaint(void* param, const RECTF* rect, const RECTF* visi
 
     float aspect = CoordinateGetAspectCompensation();
     float ratio = s_usingWideScreen ? s_wideAspect / s_normalAspect : 1.0f;
-    float scale = aspect / ratio;
+    // The swap sky fills the screen whatever its shape, as the in-world curtain before it does.
+    float scale = s_swapCover ? 1.0f : aspect / ratio;
 
     float left = 0.0f;
     float width = 1.0f;
@@ -607,7 +669,9 @@ static void LoadingScreenPaint(void* param, const RECTF* rect, const RECTF* visi
 
     GxRsSet(GxRs_Fog, 0);
 
-    if (!PaintBackgroundImage()) {
+    if (s_swapCover) {
+        PaintSwapSky();
+    } else if (!PaintBackgroundImage()) {
         PaintSimpleBackground();
 
         if (s_vertexShader[0]->Valid() && s_pixelShader[0]->Valid()) {
@@ -744,6 +808,20 @@ void LoadingScreenEnable(int32_t mapID, bool loadingWorld) {
     InitializeProgressBar(loadingWorld);
 }
 
+bool LoadingScreenIsSwapCover() {
+    return s_swapCover;
+}
+
+void LoadingScreenEnableSwapCover() {
+    if (s_simpleBackgroundTexture) {
+        HandleClose(reinterpret_cast<HOBJECT>(s_simpleBackgroundTexture));
+        s_simpleBackgroundTexture = nullptr;
+    }
+
+    s_swapCover = true;
+    LoadingScreenEnable(-1, true);
+}
+
 // VERIFY: a0b9f60d auto
 // OFFSET: 0x0040AEF0
 void LoadingScreenAsyncCallback(float progress, void* param) {
@@ -835,6 +913,13 @@ void LoadingScreenDisable() {
     }
 
     s_simpleBackgroundTexture = nullptr;
+
+    if (s_swapSkyFront) {
+        HandleClose(reinterpret_cast<HOBJECT>(s_swapSkyFront));
+    }
+
+    s_swapSkyFront = nullptr;
+    s_swapCover = false;
 
     LoadingScreenDisableEvents();
     ClearDynamicData();

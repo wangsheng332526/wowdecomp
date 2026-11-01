@@ -2056,6 +2056,8 @@ void CGWorldFrame::OnWorldUpdate() {
 
     CVehiclePassenger_C::UpdateAll(FrameTime::s_curTimeMs);
     CGCamera::UpdateCallback(nullptr, this->m_camera);
+    // Not in the original: extensions may move this frame's camera before the projection and listener use it.
+    sExtensionMgr->OnCameraUpdated(this->m_camera);
 
     CGCamera* camera = this->m_camera;
     C3Vector camPos = camera->m_position;

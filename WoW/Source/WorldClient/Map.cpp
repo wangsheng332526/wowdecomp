@@ -1,6 +1,7 @@
 #include <vector>
 #include "WoW/Source/WorldClient/HD/HdTerrain.h"
 #include "Map.h"
+#include "WoW/Source/LoadingScreen.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #if defined(_MSC_VER)
 #include <malloc.h>
@@ -2335,7 +2336,12 @@ void CMap::PrepareUpdate(bool addToScene) {
         return;
     }
 
-    if (!CMap::s_isStreamingMode) {
+    // Esteria character swap: under the swap's cover only the terrain in view and what stands on the character's
+    // chunk are waited for (the streaming path's chunk loops below), so the floor is there when the character is;
+    // everything further out streams in while the camera comes down.
+    const bool swap = !CMap::s_isStreamingMode && LoadingScreenIsSwapCover();
+
+    if (!CMap::s_isStreamingMode && !swap) {
         AsyncFileReadWaitAll();
 
         if (World::s_loadProgressCallback) {
@@ -2377,7 +2383,9 @@ void CMap::PrepareUpdate(bool addToScene) {
 
     CMapArea* area = CMap::GetAreaAtPosition(reinterpret_cast<const C2Vector*>(&World::s_currentWorldPos));
 
-    if (area && area->m_asyncObject) {
+    if (swap) {
+        AsyncFileReadWaitAll();
+    } else if (area && area->m_asyncObject) {
         char fileName[260];
         SFile::GetActualFileName(area->m_asyncObject->m_file, fileName, sizeof(fileName));
         AsyncFile::EnterQueueLock();
@@ -3047,7 +3055,8 @@ void CMap::Load(const char* mapName, int32_t zoneID) {
 
     int32_t streaming = SFile::IsStreamingMode();
     CMap::s_isStreamingMode = SFile::IsTrial() | streaming;
-    bool wait = CMap::s_isStreamingMode == 0;
+    // A character swap does not wait for the rest of the map either (PrepareUpdate)
+    bool wait = CMap::s_isStreamingMode == 0 && !LoadingScreenIsSwapCover();
 
     CMap::s_lowDetail.Load(CMap::mapPath, CMap::mapName);
     CMap::LoadWdt();

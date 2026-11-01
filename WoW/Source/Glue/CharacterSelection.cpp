@@ -62,6 +62,8 @@ static float s_ghostGlow = 0.15f;
 // STATIC: 0x00AC436C
 int32_t CCharacterSelection::s_selectionIndex = -1;
 
+WOWGUID CCharacterSelection::s_autoEnterGuid = { 0 };
+
 // STATIC: 0x00B6B1FC
 CSimpleModelFFX* CCharacterSelection::m_modelFrame;
 
@@ -885,6 +887,12 @@ void CCharacterSelection::UpdateCharacterList() {
 
     ClientServices::Connection()->EnumerateCharacters(&CCharacterSelection::EnumerateCharactersCallback, nullptr);
 
+    // A character swap with nothing to enter: uncover the character select (ClientDestroyGame covered it).
+    if (!CCharacterSelection::s_characterList.Count() && CCharacterSelection::s_autoEnterGuid) {
+        CCharacterSelection::s_autoEnterGuid = { 0 };
+        LoadingScreenDisable();
+    }
+
     if (!CCharacterSelection::s_characterList.Count()) {
         CCharacterSelection::s_selectionIndex = 0;
         CCharacterSelection::ShowCharacter();
@@ -910,6 +918,30 @@ void CCharacterSelection::UpdateCharacterList() {
         CCharacterSelection::s_raceRestrictions[9] = ClientServices::Connection()->m_restrictBloodElf;
 
         CRealmList::m_preferredCategory = 0;
+
+        // Character swap: enter the world as the chosen character at once. The screen is covered
+        // (ClientDestroyGame), so the list is not built; the chosen character's model is, because the game takes it
+        // over (Shutdown -> m_activePlayerComponent) and shows the character at once instead of building it again.
+        // Only once: a target missing from the list, or one EnterWorld refuses, uncovers the normal character select.
+        WOWGUID autoEnter = CCharacterSelection::s_autoEnterGuid;
+        CCharacterSelection::s_autoEnterGuid = { 0 };
+
+        if (autoEnter) {
+            for (uint32_t i = 0; i < CCharacterSelection::s_characterList.Count(); i++) {
+                if (CCharacterSelection::s_characterList[i].m_characterInfo.m_guid == autoEnter) {
+                    CCharacterSelection::s_selectionIndex = static_cast<int32_t>(i);
+                    CCharacterSelection::ShowCharacter();
+                    CGlueMgr::EnterWorld();
+                    break;
+                }
+            }
+
+            if (CGlueMgr::m_idleState == IDLE_ENTER_WORLD) {
+                return;
+            }
+
+            LoadingScreenDisable();
+        }
 
         int32_t index = g_lastCharacterIndexVar->m_intValue < 0 ? 0 : g_lastCharacterIndexVar->m_intValue;
 
